@@ -1,0 +1,121 @@
+ <# 
+.Synopsis
+Queries All the Distribution lists in the particular domain and extracts the key parameters in csv file.
+.Description
+Extracts list of all the DL's with there properties like Name,DisplayName,MembershipCount,HiddeninGAL,PrimaryEmailAddress,AcceptMessagesFromOutside,RestrictedtoAcceptMessagesFrom,Owner.
+Along with SendingRights from AD.
+Make sure that Exchange and Active Directory is there on the machine from which it is being run.
+.Examples
+Run by clicking DLExport.bat or .\DLExport.ps1
+.Contact
+Name : Neeraj Kumar, Email : neeraj.kumark5@outlook.com
+#>
+##------------Import Module-----------#
+If ((Get-PSSnapin | where {$_.Name -match "Microsoft.Exchange.Management.PowerShell.Snapin"}) -eq $null)
+{
+ Add-PSSnapin Microsoft.Exchange.Management.PowerShell.Snapin
+}
+#---Log---------------#
+$TxtDate=get-date -f "dd-MM-yyy_HH.mm.ss"
+$logs = ".\DL_Details" + "$TxtDate" + "_.txt"
+$Results = ".\DLInfo" + "$TxtDate"+ "_.csv"
+Start-Transcript -Path $logs
+Get-Module ActiveDirectory
+#------Getting all DL's-----#
+try{
+$dls = Get-DistributionGroup -ResultSize Unlimited -ErrorAction Stop | select name,DisplayName,HiddenFromAddressListsEnabled,PrimarySmtpAddress,RequireSenderAuthenticationEnabled,ManagedBy,AcceptMessagesOnlyFromSendersOrMembers
+}
+catch{
+"Error getting DL info."
+Exit
+ }
+#-----------Processing--------#
+$DLInfo = @()
+foreach($dl in $dls)
+{
+$mem = get-distributiongroupmember -identity $dl.name
+$count = $mem.count
+$managedby = $dl.managedby
+$restrict = $dl.AcceptMessagesOnlyFRomSendersorMembers
+if($restrict)
+{
+$restrictedwith = $restrict.name
+}
+else
+{ $restrictedwith = "None" }
+$sendas = Get-ADPermission -identity $dl.name | where {($_.ExtendedRights -like “*Send-As*”) -and ($_.IsInherited -eq $false) -and -not ($_.User -like “NT AUTHORITY\SELF”)}
+if($sendas)
+{
+$SendingPermission = $sendas.user.RawIdentity
+}
+else
+{
+$SendingPermission = "None"
+}
+$prop = New-Object -TypeName psobject -Property @{
+                              Name = $dl.name
+                              DisplayName = $dl.displayName
+                              MembershipCount = $count
+                              HiddeninGAL = $dl.HiddenFromAddressListsEnabled
+                              PrimaryEmailAddress = $dl.PrimarySmtpAddress
+                              AcceptMessagesFromOutside = $dl.RequireSenderAuthenticationEnabled
+                              RestrictedtoAcceptMessagesFrom = $restrictedwith
+                              Owner = $managedby.Name
+                              SendingRights = $SendingPermission
+                             
+                            }
+$DLInfo += $prop
+}
+#$temp = New-Object -TypeName psobject -Property $property
+#$DLInfo.Add($temp)
+$DLInfo | Select-Object Name,DisplayName,MembershipCount,HiddeninGAL,PrimaryEmailAddress,AcceptMessagesFromOutside,RestrictedtoAcceptMessagesFrom,Owner,SendingRights | Export-Csv $Results -NoTypeInformation
+
+###########Define Variables######## 
+
+$fromaddress = "Reply@domain.com" 
+$toaddress = "<>@domain.com" 
+#$CCaddress = " " 
+$Subject = "Auto-Notify | Exchange On-Prem | Report |DL - Distribution List details" 
+$body = @"
+<!DOCTYPE html>
+<html>
+<head>
+<div id ="disclaimer" style="color:blue;font-size:12px;background-color:#DCDCDC;">Disclaimer:This is an automated email notification,please do not reply. </div>
+<div id ="sname" style="background-color:#DCDCDC;"><b>Script Name:</b> DLExport1.ps1</div>
+<div id ="server" style="background-color:#DCDCDC;"><b>Server:</b></div>
+<div id ="desc" style="background-color:#DCDCDC;"><b>Description:</b></div>
+</head>
+
+   <body> <br> Hi All,
+          <br> Please find attachements. </br>
+           
+   </body>
+<footer>
+<br>Regards,
+<br> Team
+</footer>
+</html>
+"@
+$attachment = $Results 
+$smtpserver = "Mailhost" 
+
+#################################### 
+
+$message = new-object System.Net.Mail.MailMessage 
+$message.From = $fromaddress 
+$message.To.Add($toaddress) 
+#$message.CC.Add($CCaddress) 
+$message.IsBodyHtml = $True 
+$message.Subject = $Subject 
+$attach = new-object Net.Mail.Attachment($attachment) 
+$message.Attachments.Add($attach) 
+$message.body = $body 
+$smtp = new-object Net.Mail.SmtpClient($smtpserver) 
+$smtp.Send($message)
+
+#############----End of the Script-----#######################
+
+#Get-PSSession | Remove-PSSession
+
+Stop-Transcript
+ 
